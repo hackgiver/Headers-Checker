@@ -1,0 +1,131 @@
+#!/usr/bin/env python3
+"""
+Security Headers Checker - Pentest Tool
+Usage: python3 header_checker.py <url> [--no-verify]
+"""
+
+import sys
+import argparse
+import requests
+from urllib.parse import urlparse
+
+# ANSI colors
+GREEN  = "\033[92m"
+RED    = "\033[91m"
+YELLOW = "\033[93m"
+CYAN   = "\033[96m"
+BOLD   = "\033[1m"
+RESET  = "\033[0m"
+
+HEADERS_TO_CHECK = {
+    "Strict-Transport-Security": {
+        "desc": "Enforces HTTPS (HSTS)",
+        "rec":  "max-age=31536000; includeSubDomains; preload"
+    },
+    "Content-Security-Policy": {
+        "desc": "Prevents XSS / data injection attacks",
+        "rec":  "default-src 'self'"
+    },
+    "X-XSS-Protection": {
+        "desc": "Legacy XSS filter (browsers)",
+        "rec":  "1; mode=block"
+    },
+    "X-Frame-Options": {
+        "desc": "Prevents Clickjacking",
+        "rec":  "DENY or SAMEORIGIN"
+    },
+    "X-Content-Type-Options": {
+        "desc": "Blocks MIME-sniffing",
+        "rec":  "nosniff"
+    },
+    "Cache-Control": {
+        "desc": "Prevents caching of sensitive data",
+        "rec":  "no-store, no-cache, must-revalidate"
+    },
+    "Referrer-Policy": {
+        "desc": "Controls Referrer header leakage",
+        "rec":  "strict-origin-when-cross-origin"
+    },
+    "Permissions-Policy": {
+        "desc": "Restricts browser feature access",
+        "rec":  "geolocation=(), microphone=(), camera=()"
+    },
+}
+
+def normalize_url(url):
+    if not url.startswith(("http://", "https://")):
+        url = "https://" + url
+    return url
+
+def check_headers(url, verify_ssl=True):
+    try:
+        resp = requests.get(url, timeout=10, verify=verify_ssl,
+                            allow_redirects=True,
+                            headers={"User-Agent": "SecurityHeadersChecker/1.0"})
+    except requests.exceptions.SSLError:
+        print(f"{YELLOW}[!] SSL error. Retry with --no-verify to skip certificate validation.{RESET}")
+        sys.exit(1)
+    except requests.exceptions.ConnectionError:
+        print(f"{RED}[!] Could not connect to {url}{RESET}")
+        sys.exit(1)
+    except requests.exceptions.Timeout:
+        print(f"{RED}[!] Connection timed out.{RESET}")
+        sys.exit(1)
+
+    # Normalize response headers to lowercase keys for comparison
+    resp_headers_lower = {k.lower(): v for k, v in resp.headers.items()}
+
+    print(f"\n{BOLD}{CYAN}{'='*60}{RESET}")
+    print(f"{BOLD}{CYAN}  Security Headers Report{RESET}")
+    print(f"{BOLD}{CYAN}{'='*60}{RESET}")
+    print(f"  {BOLD}URL:{RESET}    {resp.url}")
+    print(f"  {BOLD}Status:{RESET} {resp.status_code}")
+    print(f"{BOLD}{CYAN}{'='*60}{RESET}\n")
+
+    present = []
+    missing = []
+
+    for header, info in HEADERS_TO_CHECK.items():
+        value = resp_headers_lower.get(header.lower())
+        if value:
+            present.append(header)
+            print(f"  {GREEN}[✔] {header}{RESET}")
+            print(f"      {BOLD}Value:{RESET} {value}")
+            print(f"      {BOLD}Info:{RESET}  {info['desc']}\n")
+        else:
+            missing.append(header)
+            print(f"  {RED}[✘] {header}{RESET}")
+            print(f"      {BOLD}Info:{RESET}  {info['desc']}")
+            print(f"      {BOLD}Fix:{RESET}   {header}: {info['rec']}\n")
+
+    # Summary
+    print(f"{BOLD}{CYAN}{'='*60}{RESET}")
+    print(f"  {BOLD}Summary:{RESET} {GREEN}{len(present)} present{RESET} / {RED}{len(missing)} missing{RESET} out of {len(HEADERS_TO_CHECK)}")
+    score = int((len(present) / len(HEADERS_TO_CHECK)) * 100)
+    color = GREEN if score >= 75 else YELLOW if score >= 50 else RED
+    print(f"  {BOLD}Score:{RESET}   {color}{score}%{RESET}")
+    print(f"{BOLD}{CYAN}{'='*60}{RESET}\n")
+
+    if missing:
+        print(f"{BOLD}{RED}  Missing headers:{RESET}")
+        for h in missing:
+            print(f"    - {h}")
+        print()
+
+    # Extra: show all response headers
+    print(f"{BOLD}{YELLOW}  All response headers received:{RESET}")
+    for k, v in resp.headers.items():
+        print(f"    {k}: {v}")
+    print()
+
+def main():
+    parser = argparse.ArgumentParser(description="Security Headers Checker for pentesting")
+    parser.add_argument("url", help="Target URL (e.g. https://example.com)")
+    parser.add_argument("--no-verify", action="store_true", help="Skip SSL certificate verification")
+    args = parser.parse_args()
+
+    url = normalize_url(args.url)
+    check_headers(url, verify_ssl=not args.no_verify)
+
+if __name__ == "__main__":
+    main()
